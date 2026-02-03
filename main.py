@@ -3,7 +3,6 @@ from telebot import types
 import os
 
 # Запускаем веб-сервер для поддержания активности
-keep_alive()
 
 # Токен берется из секретов Replit
 TOKEN = os.environ.get('TOKEN')
