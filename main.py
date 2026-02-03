@@ -1,7 +1,6 @@
 import telebot
 from telebot import types
 import os
-from keep_alive import keep_alive
 
 # Запускаем веб-сервер для поддержания активности
 keep_alive()
