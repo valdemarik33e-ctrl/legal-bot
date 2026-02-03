@@ -2,11 +2,37 @@ import telebot
 from telebot import types
 import os
 import datetime
+import json
+import time
 
 # ========== НАСТРОЙКИ ==========
-TOKEN = os.environ.get('TOKEN')  # Токен берется из Railway
-ADMIN_ID = 1615054558  # Ваш Telegram ID (уведомления будут приходить сюда)
+TOKEN = os.environ.get('TOKEN')
+ADMIN_ID = 1615054558  # Ваш Telegram ID
 bot = telebot.TeleBot(TOKEN)
+
+# ========== ХРАНЕНИЕ ДАННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
+# Простое хранилище в памяти (для продакшена лучше использовать базу данных)
+user_data_storage = {}
+
+def save_user_data(user_id, user_info):
+    """Сохраняет данные пользователя"""
+    user_data_storage[user_id] = {
+        'first_name': user_info.get('first_name', ''),
+        'last_name': user_info.get('last_name', ''),
+        'username': user_info.get('username', ''),
+        'phone': user_info.get('phone', ''),
+        'last_activity': datetime.datetime.now().isoformat()
+    }
+    # Для отладки: сохраняем в файл
+    try:
+        with open('users_data.json', 'w', encoding='utf-8') as f:
+            json.dump(user_data_storage, f, ensure_ascii=False, indent=2)
+    except:
+        pass
+
+def get_user_data(user_id):
+    """Получает данные пользователя"""
+    return user_data_storage.get(user_id, {})
 
 # ========== БАЗА ДАННЫХ УСЛУГ ==========
 services = {
@@ -37,7 +63,6 @@ services = {
     }
 }
 
-# Описания услуг (для кнопки "Подробнее")
 service_details = {
     "reg_llc": "<b>Регистрация ООО</b>\n\nВключено:\n✓ Проверка названия\n✓ Подготовка документов\n✓ Открытие расчетного счета\n✓ Государственная пошлина\n\nСрок: 7 рабочих дней\nЦена: 15 000 ₽",
     "reg_ao": "<b>Регистрация АО</b>\n\nВключено:\n✓ Полный юридический сопровождение\n✓ Подготовка устава\n✓ Регистрация в ЦБ РФ\n✓ Консультация по акциям\n\nСрок: 10 рабочих дней\nЦена: 25 000 ₽",
@@ -46,38 +71,84 @@ service_details = {
     "liquidation": "<b>Ликвидация юридического лица</b>\n\nЭтапы:\n1. Принятие решения о ликвидации\n2. Уведомление ИФНС\n3. Публикация в Вестнике госрегистрации\n4. Расчет с кредиторами\n5. Закрытие счетов\n6. Снятие с учета\n\nСрок: от 4 месяцев\nЦена: от 60 000 ₽"
 }
 
-# ========== ФУНКЦИЯ УВЕДОМЛЕНИЙ ==========
-def notify_admin(user_info, action="начал общение", service=""):
-    """Отправляет уведомление администратору"""
+# ========== УЛУЧШЕННАЯ ФУНКЦИЯ УВЕДОМЛЕНИЙ ==========
+def notify_admin(user_id, action="начал общение", service="", with_contact_button=True):
+    """Отправляет уведомление администратору с кнопкой для связи"""
     try:
+        # Получаем данные пользователя
+        user_data = get_user_data(user_id)
+        
+        # Если данных нет, используем базовую информацию
+        first_name = user_data.get('first_name', 'Неизвестно')
+        last_name = user_data.get('last_name', '')
+        username = user_data.get('username', '')
+        
         time_now = datetime.datetime.now().strftime('%H:%M %d.%m.%Y')
+        
+        # Формируем сообщение
         message = (
             f"🔔 <b>НОВЫЙ КЛИЕНТ В БОТЕ</b>\n"
             f"▫️ <b>Действие:</b> {action}\n"
-            f"▫️ <b>Имя:</b> {user_info.get('first_name', 'Не указано')}\n"
-            f"▫️ <b>Фамилия:</b> {user_info.get('last_name', 'Не указана')}\n"
-            f"▫️ <b>Логин:</b> @{user_info.get('username', 'Нет логина')}\n"
-            f"▫️ <b>ID:</b> <code>{user_info.get('id', 'Нет ID')}</code>\n"
+            f"▫️ <b>Имя:</b> {first_name}\n"
         )
+        
+        if last_name:
+            message += f"▫️ <b>Фамилия:</b> {last_name}\n"
+        if username:
+            message += f"▫️ <b>Логин:</b> @{username}\n"
+        
+        message += f"▫️ <b>ID:</b> <code>{user_id}</code>\n"
+        
         if service:
             message += f"▫️ <b>Услуга:</b> {service}\n"
-        message += f"▫️ <b>Время:</b> {time_now}"
         
-        bot.send_message(ADMIN_ID, message, parse_mode='HTML')
-        print(f"✅ Уведомление отправлено администратору {ADMIN_ID}")
+        message += f"▫️ <b>Время:</b> {time_now}\n\n"
+        
+        # Добавляем подсказку для связи
+        if username:
+            message += f"<i>Чтобы ответить, нажмите на кнопку ниже или напишите @{username}</i>"
+        else:
+            message += f"<i>Чтобы ответить, используйте ID: {user_id}</i>"
+        
+        # Создаем клавиатуру с кнопкой для связи
+        keyboard = types.InlineKeyboardMarkup()
+        
+        # Если у пользователя есть username, создаем кнопку с ссылкой
+        if username and with_contact_button:
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    "💬 Написать пользователю",
+                    url=f"https://t.me/{username}"
+                )
+            )
+        
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "✅ Обработано",
+                callback_data=f"processed_{user_id}"
+            )
+        )
+        
+        bot.send_message(
+            ADMIN_ID,
+            message,
+            parse_mode='HTML',
+            reply_markup=keyboard
+        )
+        
+        print(f"✅ Уведомление отправлено администратору о пользователе {user_id}")
+        
     except Exception as e:
         print(f"❌ Ошибка отправки уведомления: {e}")
 
 # ========== ФУНКЦИИ КЛАВИАТУР ==========
 def main_menu():
-    """Главное меню с категориями"""
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     
-    # Кнопки категорий (распределяем по 2 в ряд)
     buttons = []
     for key, service in services.items():
         buttons.append(types.InlineKeyboardButton(
-            service["name"], 
+            service["name"],
             callback_data=f"cat_{key}"
         ))
     
@@ -87,27 +158,23 @@ def main_menu():
         else:
             keyboard.add(buttons[i])
     
-    # Кнопки в самом низу
     keyboard.row(
-        types.InlineKeyboardButton("🌐 Наш сайт", url="https://yandex-legal-pros.lovable.app/"),  # ЗАМЕНИТЕ НА ВАШ САЙТ!
+        types.InlineKeyboardButton("🌐 Наш сайт", url="https://yandex-legal-pros.lovable.app/"),
         types.InlineKeyboardButton("📞 Связаться", callback_data="contact_manager")
     )
     
     return keyboard
 
 def category_menu(category_key):
-    """Меню конкретной категории"""
     keyboard = types.InlineKeyboardMarkup()
     service = services[category_key]
     
-    # Кнопки услуг в этой категории
     for key, option in service["options"].items():
         keyboard.add(types.InlineKeyboardButton(
-            option, 
+            option,
             callback_data=f"serv_{key}"
         ))
     
-    # Кнопки навигации
     keyboard.row(
         types.InlineKeyboardButton("◀️ Назад", callback_data="main_menu"),
         types.InlineKeyboardButton("💬 Консультация", callback_data=f"consult_{category_key}")
@@ -116,29 +183,26 @@ def category_menu(category_key):
     return keyboard
 
 def service_menu(service_key):
-    """Меню конкретной услуги"""
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     
-    # Основные кнопки
     keyboard.add(
         types.InlineKeyboardButton(
-            "📄 Подробнее на сайте", 
-            url=f"https://yandex-legal-pros.lovable.app//service/{service_key}"  # ЗАМЕНИТЕ НА ВАШ САЙТ!
+            "📄 Подробнее на сайте",
+            url=f"https://yandex-legal-pros.lovable.app//service/{service_key}"
         ),
         types.InlineKeyboardButton(
-            "💬 Обсудить с менеджером", 
+            "💬 Обсудить с менеджером",
             callback_data=f"contact_{service_key}"
         )
     )
     
-    # Кнопки навигации
     keyboard.add(
         types.InlineKeyboardButton(
-            "◀️ К категории", 
+            "◀️ К категории",
             callback_data=f"cat_{service_key.split('_')[0]}"
         ),
         types.InlineKeyboardButton(
-            "🏠 В главное меню", 
+            "🏠 В главное меню",
             callback_data="main_menu"
         )
     )
@@ -149,15 +213,20 @@ def service_menu(service_key):
 @bot.message_handler(commands=['start'])
 def start_command(message):
     """Обработчик команды /start"""
-    # Отправляем уведомление администратору
     user = message.from_user
+    
+    # Сохраняем данные пользователя
     user_info = {
         'id': user.id,
-        'first_name': user.first_name or 'Не указано',
-        'last_name': user.last_name or 'Не указана',
-        'username': user.username or 'Нет логина'
+        'first_name': user.first_name or '',
+        'last_name': user.last_name or '',
+        'username': user.username or ''
     }
-    notify_admin(user_info, "запустил бота")
+    
+    save_user_data(user.id, user_info)
+    
+    # Отправляем уведомление администратору
+    notify_admin(user.id, "запустил бота командой /start")
     
     # Приветствуем пользователя
     welcome_text = (
@@ -165,7 +234,7 @@ def start_command(message):
         "Я помогу вам выбрать нужную услугу:\n"
         "• Регистрация ООО, АО, ИП, НКО\n"
         "• Юридические адреса по всей России\n"
-        "• Миграция и ликвидация компаций\n\n"
+        "• Миграция и ликвидация компаний\n\n"
         "<i>Выберите категорию:</i>"
     )
     
@@ -176,45 +245,75 @@ def start_command(message):
         reply_markup=main_menu()
     )
 
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    """Обработчик команды /help"""
-    help_text = (
-        "<b>Доступные команды:</b>\n"
-        "/start - Главное меню\n"
-        "/help - Справка\n"
-        "/manager - Связаться с менеджером\n\n"
-        "<i>Просто нажимайте на кнопки в меню для навигации</i>"
-    )
-    bot.send_message(message.chat.id, help_text, parse_mode='HTML')
-
-@bot.message_handler(commands=['manager'])
-def manager_command(message):
-    """Обработчик команды /manager"""
-    # Уведомление администратору
-    user = message.from_user
-    user_info = {
-        'id': user.id,
-        'first_name': user.first_name or 'Не указано',
-        'last_name': user.last_name or 'Не указана',
-        'username': user.username or 'Нет логина'
-    }
-    notify_admin(user_info, "запросил контакт через команду /manager")
-    
-    contact_manager(message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback(call):
-    """Обработчик нажатий на все inline-кнопки"""
+# ========== ОБРАБОТЧИК ЗАПРОСА КОНТАКТА ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith('contact_'))
+def handle_contact_request(call):
+    """Обработчик нажатия на кнопку 'Связаться с менеджером'"""
     chat_id = call.message.chat.id
     message_id = call.message.message_id
     user = call.from_user
     
-    # Убираем "часики" на кнопке
+    # Определяем услугу
+    service_key = call.data[8:] if call.data != "contact_manager" else ""
+    service_name = "общая консультация"
+    
+    if service_key:
+        # Ищем название услуги
+        for category in services.values():
+            if service_key in category["options"]:
+                service_name = category["options"][service_key]
+                break
+    
+    # Сохраняем/обновляем данные пользователя
+    user_info = {
+        'id': user.id,
+        'first_name': user.first_name or '',
+        'last_name': user.last_name or '',
+        'username': user.username or ''
+    }
+    
+    save_user_data(user.id, user_info)
+    
+    # Отправляем уведомление администратору
+    notify_admin(
+        user.id,
+        "запросил контакт с менеджером",
+        service_name,
+        with_contact_button=True
+    )
+    
+    # Подтверждаем пользователю
+    bot.answer_callback_query(
+        call.id,
+        "✅ Ваш запрос отправлен менеджеру! С вами свяжутся в ближайшее время.",
+        show_alert=True
+    )
+    
+    # Показываем контактную информацию пользователю
+    contact_manager(chat_id, service_name)
+
+# ========== ОБРАБОТЧИК ДРУГИХ CALLBACK ==========
+@bot.callback_query_handler(func=lambda call: True)
+def handle_other_callbacks(call):
+    """Обработчик остальных callback-запросов"""
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+    user = call.from_user
+    
     bot.answer_callback_query(call.id)
     
-    # ===== ГЛАВНОЕ МЕНЮ =====
-    if call.data == "main_menu":
+    # Обработка кнопки "Обработано"
+    if call.data.startswith('processed_'):
+        user_id = call.data[10:]
+        bot.answer_callback_query(
+            call.id,
+            f"✅ Заявка от пользователя {user_id} отмечена как обработанная",
+            show_alert=False
+        )
+        return
+    
+    # Главное меню
+    elif call.data == "main_menu":
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
@@ -223,9 +322,9 @@ def handle_callback(call):
             reply_markup=main_menu()
         )
     
-    # ===== КАТЕГОРИИ (cat_registration, cat_addresses...) =====
+    # Категории
     elif call.data.startswith("cat_"):
-        category_key = call.data[4:]  # Убираем "cat_"
+        category_key = call.data[4:]
         
         if category_key in services:
             category = services[category_key]
@@ -237,11 +336,10 @@ def handle_callback(call):
                 reply_markup=category_menu(category_key)
             )
     
-    # ===== УСЛУГИ (serv_reg_llc, serv_migration...) =====
+    # Услуги
     elif call.data.startswith("serv_"):
-        service_key = call.data[5:]  # Убираем "serv_"
+        service_key = call.data[5:]
         
-        # Если есть описание - показываем его
         if service_key in service_details:
             text = service_details[service_key]
         else:
@@ -255,65 +353,41 @@ def handle_callback(call):
             reply_markup=service_menu(service_key)
         )
     
-    # ===== КОНСУЛЬТАЦИЯ ПО КАТЕГОРИИ =====
+    # Консультация по категории
     elif call.data.startswith("consult_"):
         category_key = call.data[8:]
         if category_key in services:
-            # Уведомление администратору
+            service_name = f"консультация по категории: {services[category_key]['name']}"
+            
+            # Сохраняем данные пользователя
             user_info = {
                 'id': user.id,
-                'first_name': user.first_name or 'Не указано',
-                'last_name': user.last_name or 'Не указана',
-                'username': user.username or 'Нет логина'
+                'first_name': user.first_name or '',
+                'last_name': user.last_name or '',
+                'username': user.username or ''
             }
-            notify_admin(user_info, "запросил консультацию", 
-                        f"категория: {services[category_key]['name']}")
+            save_user_data(user.id, user_info)
             
-            contact_manager(chat_id, f"консультация по категории: {services[category_key]['name']}")
-    
-    # ===== СВЯЗЬ С МЕНЕДЖЕРОМ =====
-    elif call.data.startswith("contact_"):
-        service_key = call.data[8:] if call.data != "contact_manager" else ""
-        
-        # Определяем название услуги для уведомления
-        service_name = "общая консультация"
-        if service_key:
-            # Пытаемся найти название услуги
-            for category in services.values():
-                if service_key in category["options"]:
-                    service_name = category["options"][service_key]
-                    break
-        
-        # Уведомление администратору
-        user_info = {
-            'id': user.id,
-            'first_name': user.first_name or 'Не указано',
-            'last_name': user.last_name or 'Не указана',
-            'username': user.username or 'Нет логина'
-        }
-        notify_admin(user_info, "запросил контакт с менеджером", service_name)
-        
-        contact_manager(chat_id, service_name)
-    
-    # ===== ОШИБКА (если callback_data не распознан) =====
-    else:
-        bot.answer_callback_query(call.id, text="⚠️ Эта кнопка еще не настроена", show_alert=True)
+            # Уведомляем администратора
+            notify_admin(user.id, "запросил консультацию", service_name)
+            
+            contact_manager(chat_id, service_name)
 
 # ========== ФУНКЦИЯ СВЯЗИ С МЕНЕДЖЕРОМ ==========
 def contact_manager(chat_id, service="общая консультация"):
-    """Отправляет контакты менеджера"""
+    """Отправляет контакты менеджера пользователю"""
     manager_text = (
         f"<b>📞 Связь с менеджером</b>\n\n"
         f"<i>Услуга:</i> {service}\n\n"
-        "Чтобы обсудить детали, вы можете:\n\n"
-        "1. <b>Позвонить:</b> +7 (985) 057-64-65\n"  # ЗАМЕНИТЕ НА ВАШ ТЕЛЕФОН!
-        "2. <b>Email:</b> delovye-resheniya@mail.ru\n"     # ЗАМЕНИТЕ НА ВАШ EMAIL!
-        "3. <b>Telegram:</b> @DelovyeResheniya\n\n"     # ЗАМЕНИТЕ НА ЮЗЕРНЕЙМ МЕНЕДЖЕРА!
+        "✅ <b>Ваш запрос отправлен менеджеру!</b>\n\n"
+        "С вами свяжутся в ближайшее время:\n\n"
+        "1. <b>Telegram:</b> @DelovyeResheniya\n"
+        "2. <b>Телефон:</b> +7 (985) 057-64-65\n"
+        "3. <b>Email:</b> delovye-resheniya@mail.ru\n\n"
         "🕐 <i>Рабочее время: Пн-Пт с 9:00 до 18:00</i>\n\n"
         "<i>Укажите, что обратились через бота для получения приоритетного обслуживания.</i>"
     )
     
-    # Кнопка для возврата в главное меню
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🏠 В главное меню", callback_data="main_menu"))
     
@@ -324,21 +398,28 @@ def contact_manager(chat_id, service="общая консультация"):
         reply_markup=keyboard
     )
 
-# ========== ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ ==========
+# ========== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ==========
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
-    """Обработчик текстовых сообщений (если пользователь что-то пишет)"""
-    # Уведомление администратору о текстовом сообщении
+    """Обработчик текстовых сообщений"""
     user = message.from_user
+    
+    # Сохраняем данные пользователя
     user_info = {
         'id': user.id,
-        'first_name': user.first_name or 'Не указано',
-        'last_name': user.last_name or 'Не указана',
-        'username': user.username or 'Нет логина'
+        'first_name': user.first_name or '',
+        'last_name': user.last_name or '',
+        'username': user.username or ''
     }
-    notify_admin(user_info, f"написал сообщение: {message.text[:50]}...")
+    save_user_data(user.id, user_info)
     
-    # Предлагаем воспользоваться меню
+    # Уведомляем администратора о сообщении
+    notify_admin(
+        user.id,
+        f"написал сообщение: {message.text[:50]}...",
+        with_contact_button=True
+    )
+    
     bot.send_message(
         message.chat.id,
         "Используйте кнопки меню для навигации ☝️\n"
@@ -349,19 +430,23 @@ def handle_text(message):
 # ========== ЗАПУСК БОТА ==========
 if __name__ == "__main__":
     print("=" * 50)
+    print("🔄 Удаляем старые подключения...")
+    
+    # Удаляем вебхуки и ждем
+    try:
+        bot.remove_webhook()
+        time.sleep(3)
+    except:
+        pass
+    
     print("✅ Бот запущен и работает на Railway!")
     print(f"👨‍💼 Уведомления будут отправляться ID: {ADMIN_ID}")
     print("=" * 50)
     
-    # Удаляем вебхук на всякий случай
-    bot.remove_webhook()
-    
-    # Запускаем опрос серверов Telegram
+    # Запускаем опрос
     try:
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
     except Exception as e:
-        print(f"❌ Ошибка при запуске бота: {e}")
-        print("Перезапуск через 5 секунд...")
-        import time
-        time.sleep(5)
-    
+        print(f"❌ Ошибка: {e}")
+        print("Перезапуск через 10 секунд...")
+        time.sleep(10)
